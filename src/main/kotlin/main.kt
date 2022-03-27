@@ -8,8 +8,8 @@ val size = findPrime(1000000).toInt()
 data class Params(val size: Int, val bucketSize: Int, val load: Double)
 
 fun main(args: Array<String>) {
-    val load = args[0].toDouble()
-    listOf(::t3, ::t4).forEach{ println("${it(load)}\n\n") }
+    val load = if (args.size>0) args[0].toDouble() else 0.16
+    listOf(::t5).forEach{ println("${it(load)}\n\n") }
 }
 
 fun t1(load: Double): String {
@@ -24,14 +24,26 @@ fun t2(load: Double): String {
 }
 
 fun t3(load: Double): String {
-    val seq =  (6..20).map{ it to Params(size, it, load) }
+    val seq =  (4..20).map{ it to Params(size, it, load) }
     return test("Bucket Size", seq)
 }
 
 fun t4(load: Double): String {
-    val bucketSize = 10
+    val bucketSize = 4
     val seq =  (6..20).map{ it.toDouble()/100.0 }.map{ it to Params(size, bucketSize, it) }
     return test("Load", seq)
+}
+
+fun t5(load: Double): String {
+    with (Table()) {
+        (5..25).forEach { load->
+            append("Load %", "%3d".format(load))
+            (4..10).forEach { bucketSize->
+                append("$bucketSize", "%4d".format(testOne(size, bucketSize, load.toDouble()/100.0).overflows))
+            }
+        }
+        return render()
+    }
 }
 
 fun crc(v: Long) =
@@ -54,7 +66,7 @@ fun<T> test(varName: String, seq: List<Pair<T,Params>>) =
     with (Table()) {
         seq.map { it to testOne(it.second.size, it.second.bucketSize, it.second.load) }
             .forEach {
-                    append(varName, it.first.first.toString())
+                append(varName, it.first.first.toString())
                     .append("Entries", "%5d".format(it.second.occupied))
                     .append(
                         "Load %",
@@ -62,13 +74,14 @@ fun<T> test(varName: String, seq: List<Pair<T,Params>>) =
                     )
                     .append("Av Length", "%.2f".format(it.second.avgLength))
                     .append("Max Length", "%4d".format(it.second.maxLength))
+                    .append("Overflows", "%4d".format(it.second.overflows))
                     .append("Failures", "%4d".format(it.second.failures))
             }
         render()
     }
 
 fun testOne(size: Int, bucketSize: Int, load: Double): Stats {
-    val ht = HashTable(size, bucketSize, ::crc, ::linearRehash, false)
+    val ht = HashTable(size, bucketSize, ::crc, ::linearRehash, false, overflowNextBucket = true)
     var failures = 0
     for (i in 0..(size * load).toInt()) {
         val v = Random.nextLong()

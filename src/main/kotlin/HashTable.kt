@@ -1,5 +1,5 @@
 
-data class Stats(val occupied: Int, val avgLength: Double, val maxLength: Int, var failures: Int=0) {
+data class Stats(val occupied: Int, val avgLength: Double, val maxLength: Int, val overflows: Int, var failures: Int=0) {
 
     fun setFailures(f: Int) =
         also {
@@ -11,8 +11,10 @@ class HashTable<T> (val size: Int,
                     val bucketSize: Int,
                     val hashfn: (T)->Long,
                     val rehash: (Int, Int, Int)->Int,
-                    val hashWithinBucket: Boolean = true) {
+                    val hashWithinBucket: Boolean = true,
+                    val overflowNextBucket: Boolean = false) {
     val bucketCount = size / bucketSize
+    var overflows = 0
 
     class Bucket<T>(val table: HashTable<T>, val size: Int) {
 
@@ -49,18 +51,18 @@ class HashTable<T> (val size: Int,
             }
         }
 
-        fun find(hash: Long): T? {
+        fun find(hash: Long): Pair<T?, Boolean> {
             var e = getEntry(hash)
             var attempt = 0
             while (true) {
                 val entry = content[e]
                 when {
                     entry == null ->
-                        return null
+                        return null to false
                     entry.hash == hash ->
-                        return entry.value
+                        return entry.value to false
                     attempt >= size ->
-                        return null
+                        return null to true
                     else -> {
                         e = table.rehash(e, attempt, size)
                         ++attempt
@@ -71,14 +73,14 @@ class HashTable<T> (val size: Int,
 
         fun getStats(): Stats =
             with(content.mapIndexed { index, _ -> chainLength(index) }) {
-                Stats(entries, (filter{it>0}.nullIfEmpty()?.average() ?: 0.0), maxOf{ it })
+                Stats(entries, (filter{it>0}.nullIfEmpty()?.average() ?: 0.0), maxOf{ it }, 0)
             }
 
         fun chainLength(e: Int) =
-            (0..size).fold(0 to e){ where, len ->
+            minOf(size, (0..size).fold(0 to e){ where, len ->
                 if (content[where.second]==null) return where.first
                 where.first + 1 to table.rehash(where.second, where.first, size)
-            }.first
+            }.first)
     }
 
     val buckets = Array<Bucket<T>>(bucketCount, { Bucket(this, bucketSize) })
@@ -86,18 +88,44 @@ class HashTable<T> (val size: Int,
     fun insert(entry: T): Boolean {
         val hash = hashfn(entry)
         val bucket = (hash % bucketCount).toInt()
-        return buckets[bucket].insert(hash, entry)
+        var b = bucket
+        while (true) {
+            val r = buckets[b].insert(hash, entry)
+            if (r || !overflowNextBucket) {
+                return r
+            }
+            b = nextBucket(b)
+            if (b==bucket) {
+                return false
+            }
+            ++overflows
+        }
     }
 
     fun find(entry: T): T? {
         val hash = hashfn(entry)
         val bucket = (hash % bucketCount).toInt()
-        return buckets[bucket].find(hash)
+        var b = bucket
+        while (true) {
+            val f = buckets[bucket].find(hash)
+            if (!f.second || !overflowNextBucket) {
+                return f.first
+            }
+            b = nextBucket(b)
+            if (b==bucket) {
+                return null
+            }
+        }
     }
 
     fun getStats(): Stats =
         with(buckets.map{ it.getStats() }) {
-            Stats(sumOf{ it.occupied }, map{ it.avgLength }.average(), map{ it.maxLength }.maxOf{ it })
+            Stats(sumOf{ it.occupied }, map{ it.avgLength }.filter{ it > 0 }.average(), map{ it.maxLength }.maxOf{ it }, overflows)
+        }
+
+    fun nextBucket(b: Int) =
+        with (b + 1) {
+            if (this>=bucketCount) 0 else this
         }
 }
 
